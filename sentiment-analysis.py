@@ -1,3 +1,5 @@
+# Code based on: https://github.com/awslabs/amazon-sagemaker-examples/blob/master/sagemaker-python-sdk/mxnet_gluon_sentiment/sentiment.py
+
 from __future__ import print_function
 
 import logging
@@ -20,8 +22,53 @@ logging.basicConfig(level=logging.DEBUG)
 # Training methods                                             #
 # ------------------------------------------------------------ #
 
+
 def train(current_host, hosts, num_cpus, num_gpus, channel_input_dirs, model_dir, hyperparameters, **kwargs):
-    # retrieve the hyperparameters we set in notebook (with some defaults)
+    """
+    Runs Apache MXNet training. Amazon SageMaker calls this function with information
+    about the training environment. When called, if this function returns an
+    object, that object is passed to a save function.  The save function
+    can be used to serialize the model to the Amazon SageMaker training job model
+    directory.
+
+    The **kwargs parameter can be used to absorb any Amazon SageMaker parameters that
+    your training job doesn't need to use. For example, if your training job
+    doesn't need to know anything about the training environment, your function
+    signature can be as simple as train(**kwargs).
+
+    Amazon SageMaker invokes your train function with the following python kwargs:
+
+    Args:
+        - hyperparameters: The Amazon SageMaker Hyperparameters dictionary. A dict
+            of string to string.
+        - input_data_config: The Amazon SageMaker input channel configuration for
+            this job.
+        - channel_input_dirs: A dict of string-to-string maps from the
+            Amazon SageMaker algorithm input channel name to the directory containing
+            files for that input channel. Note, if the Amazon SageMaker training job
+            is run in PIPE mode, this dictionary will be empty.
+        - output_data_dir:
+            The Amazon SageMaker output data directory. After the function returns, data written to this
+            directory is made available in the Amazon SageMaker training job
+            output location.
+        - model_dir: The Amazon SageMaker model directory. After the function returns, data written to this
+            directory is made available to the Amazon SageMaker training job
+            model location.
+        - num_gpus: The number of GPU devices available on the host this script
+            is being executed on.
+        - num_cpus: The number of CPU devices available on the host this script
+            is being executed on.
+        - hosts: A list of hostnames in the Amazon SageMaker training job cluster.
+        - current_host: This host's name. It will exist in the hosts list.
+        - kwargs: Other keyword args.
+
+    Returns:
+        - (object): Optional. An Apache MXNet model to be passed to the model
+            save function. If you do not return anything (or return None),
+            the save function is not called.
+    """
+    
+    # retrieve the hyperparameters
     batch_size = hyperparameters.get('batch_size', 8)
     epochs = hyperparameters.get('epochs', 2)
     learning_rate = hyperparameters.get('learning_rate', 0.01)
@@ -58,18 +105,20 @@ def train(current_host, hosts, num_cpus, num_gpus, channel_input_dirs, model_dir
     train_iterator = BucketSentenceIter(train_sentences[start:end], train_labels[start:end], batch_size)
     val_iterator = BucketSentenceIter(val_sentences, val_labels, batch_size)
 
-    # define the network
+    # define the Gluon network
     net = TextClassifier(vocab_size, embedding_size, num_classes)
 
     # Collect all parameters from net and its children, then initialize them.
     net.initialize(mx.init.Xavier(magnitude=2.24), ctx=ctx)
-    # Trainer is for updating parameters with gradient.
+    
+    # Trainer updates parameters with the gradient.
     trainer = gluon.Trainer(net.collect_params(), 'adam',
                             {'learning_rate': learning_rate},
                             kvstore=kvstore)
     metric = mx.metric.Accuracy()
     loss = gluon.loss.SoftmaxCrossEntropyLoss()
 
+    # Training loop
     for epoch in range(epochs):
         # reset data iterator and metric at begining of epoch.
         metric.reset()
@@ -86,11 +135,14 @@ def train(current_host, hosts, num_cpus, num_gpus, channel_input_dirs, model_dir
                 output = net(data)
                 L = loss(output, label)
                 L.backward()
+                
             # take a gradient step with batch_size equal to data.shape[0]
             trainer.step(data.shape[0])
+            
             # update metric at last.
             metric.update([label], [output])
 
+            # Log training status
             if i % log_interval == 0 and i > 0:
                 name, acc = metric.get()
                 print('[Epoch %d Batch %d] Training: %s=%f, %f samples/s' %
@@ -234,6 +286,8 @@ class BucketSentenceIter(DataIter):
 
 
 class TextClassifier(gluon.HybridBlock):
+    """Text classifier model
+    
     def __init__(self, vocab_size, embedding_size, classes, **kwargs):
         super(TextClassifier, self).__init__(**kwargs)
         with self.name_scope():
@@ -241,6 +295,7 @@ class TextClassifier(gluon.HybridBlock):
             self.embedding = gluon.nn.Embedding(input_dim=vocab_size, output_dim=embedding_size)
 
     def hybrid_forward(self, F, x):
+        # Here `F` can be either mx.nd or mx.sym, x is the input data
         x = self.embedding(x)
         x = F.mean(x, axis=1)
         x = self.dense(x)
