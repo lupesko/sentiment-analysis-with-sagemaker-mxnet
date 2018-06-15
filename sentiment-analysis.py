@@ -286,7 +286,7 @@ class BucketSentenceIter(DataIter):
 
 
 class TextClassifier(gluon.HybridBlock):
-    """Text classifier model
+    # Text classification model
     
     def __init__(self, vocab_size, embedding_size, classes, **kwargs):
         super(TextClassifier, self).__init__(**kwargs)
